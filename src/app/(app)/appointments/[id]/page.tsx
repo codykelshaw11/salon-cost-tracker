@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import {
   Box,
   Button,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -55,6 +56,18 @@ type UsageRow = {
   products?: { name: string; brand: string | null } | null;
 };
 
+type PreviousAppointment = {
+  id: string;
+  appointment_datetime: string;
+  service_name: string | null;
+  notes: string | null;
+  total_product_cost: number | null;
+};
+
+type PreviousAppointmentWithProducts = PreviousAppointment & {
+  product_names: string[];
+};
+
 function fmtMoney(n: number) {
   return `$${n.toFixed(2)}`;
 }
@@ -77,6 +90,14 @@ export default function AppointmentDetailPage() {
     product_id: "",
     amount_used: "",
   });
+
+  const [prevLoading, setPrevLoading] = React.useState(false);
+  const [prevSummary, setPrevSummary] = React.useState<PreviousAppointmentWithProducts | null>(null);
+  const [prevSummaryLoaded, setPrevSummaryLoaded] = React.useState(false);
+
+  const [prevListLoading, setPrevListLoading] = React.useState(false);
+  const [prevList, setPrevList] = React.useState<PreviousAppointment[]>([]);
+  const [prevListLoaded, setPrevListLoaded] = React.useState(false);
 
   async function loadAll() {
     if (!appointmentId) return;
@@ -148,6 +169,110 @@ export default function AppointmentDetailPage() {
 
     setLoading(false);
   }
+
+  async function loadPreviousSummary() {
+  if (!appt?.client_id || !appt?.appointment_datetime) return;
+
+  setPrevLoading(true);
+  try {
+    // Find the most recent appointment BEFORE the current appointment time
+    const { data: prevAppt, error: prevErr } = await supabase
+      .from("appointments")
+      .select("id,appointment_datetime,service_name,notes,total_product_cost")
+      .eq("client_id", appt.client_id)
+      .lt("appointment_datetime", appt.appointment_datetime)
+      .order("appointment_datetime", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (prevErr) throw prevErr;
+
+    if (!prevAppt) {
+      setPrevSummary(null);
+      setPrevSummaryLoaded(true);
+      return;
+    }
+
+    // Load products used in that previous appointment
+    const { data: lines, error: linesErr } = await supabase
+      .from("appointment_products")
+      .select("products(name)")
+      .eq("appointment_id", prevAppt.id);
+
+    if (linesErr) throw linesErr;
+
+    const names =
+      (lines ?? [])
+        .map((r: any) => r?.products?.name)
+        .filter(Boolean) as string[];
+
+    // Unique + sorted for a nice display
+    const uniqueNames = Array.from(new Set(names)).sort((a, b) => a.localeCompare(b));
+
+    setPrevSummary({
+      ...(prevAppt as any),
+      total_product_cost: prevAppt.total_product_cost == null ? null : Number(prevAppt.total_product_cost),
+      product_names: uniqueNames,
+    });
+
+    setPrevSummaryLoaded(true);
+  } catch (e) {
+    console.error(e);
+    alert("Failed to load previous appointment summary. Check console.");
+  } finally {
+    setPrevLoading(false);
+  }
+}
+
+React.useEffect(() => {
+  // Auto-load previous appointment once the current appointment is available
+  if (!appt) return;
+  if (prevSummaryLoaded) return; // prevents repeated loads
+
+  loadPreviousSummary();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [appt?.id]);
+
+React.useEffect(() => {
+  // When appointmentId changes, reset "previous" section state
+  setPrevSummaryLoaded(false);
+  setPrevSummary(null);
+  // also reset the "all previous" section so it stays on-demand
+  setPrevListLoaded(false);
+  setPrevList([]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [appointmentId]);
+
+async function loadAllPreviousAppointments() {
+  if (!appt?.client_id || !appt?.appointment_datetime) return;
+
+  setPrevListLoading(true);
+  try {
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("id,appointment_datetime,service_name,notes,total_product_cost")
+      .eq("client_id", appt.client_id)
+      .lt("appointment_datetime", appt.appointment_datetime)
+      .order("appointment_datetime", { ascending: false })
+      .limit(25);
+
+    if (error) throw error;
+
+    const normalized =
+      (data ?? []).map((a: any) => ({
+        ...a,
+        total_product_cost: a.total_product_cost == null ? null : Number(a.total_product_cost),
+      })) as PreviousAppointment[];
+
+    setPrevList(normalized);
+    setPrevListLoaded(true);
+  } catch (e) {
+    console.error(e);
+    alert("Failed to load previous appointments. Check console.");
+  } finally {
+    setPrevListLoading(false);
+  }
+}
 
   React.useEffect(() => {
     loadAll();
@@ -321,8 +446,8 @@ export default function AppointmentDetailPage() {
         </Stack>
       </Paper>
 
-      <Paper variant="outlined">
-        <Table size="small">
+    <Paper variant="outlined" sx={{ overflowX: "auto", maxWidth: "100%" }}>
+        <Table size="small" sx={{ minWidth: 900 }}>
           <TableHead>
             <TableRow>
               <TableCell>Product</TableCell>
@@ -368,6 +493,164 @@ export default function AppointmentDetailPage() {
           </TableBody>
         </Table>
       </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+  <Stack spacing={2}>
+    <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <Typography variant="h6">Previous Appointments</Typography>
+
+      <Stack direction="row" spacing={1}>
+        <Button
+          variant="outlined"
+          onClick={loadPreviousSummary}
+          disabled={!appt || prevLoading}
+        >
+          {prevSummaryLoaded ? "Reload previous" : "Load previous"}
+        </Button>
+
+        <Button
+          variant="outlined"
+          onClick={loadAllPreviousAppointments}
+          disabled={!appt || prevListLoading}
+        >
+          {prevListLoaded ? "Reload all" : "Load all"}
+        </Button>
+      </Stack>
+    </Box>
+
+    {/* Previous appointment summary */}
+    <Box>
+      <Typography
+        variant="caption"
+        sx={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}
+      >
+        Most Recent Previous Appointment
+      </Typography>
+
+      {!prevSummaryLoaded ? (
+        <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+          Loading previous appointments...
+        </Typography>
+      ) : prevLoading ? (
+        <Typography sx={{ mt: 0.5 }}>Loading…</Typography>
+      ) : prevSummary == null ? (
+        <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+          No previous appointments found for this client.
+        </Typography>
+      ) : (
+        <Stack spacing={1} sx={{ mt: 1 }}>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ sm: "center" }}>
+            <Typography sx={{ fontWeight: 600 }}>
+              {fmtDateTime(prevSummary.appointment_datetime)}
+            </Typography>
+            <Typography color="text.secondary">
+              {prevSummary.service_name ?? "—"}
+            </Typography>
+            <Typography color="text.secondary">
+              Total product cost:{" "}
+              {prevSummary.total_product_cost != null
+                ? fmtMoney(prevSummary.total_product_cost)
+                : "—"}
+            </Typography>
+
+            <Box sx={{ flexGrow: 1 }} />
+
+            <Button href={`/appointments/${prevSummary.id}`} component="a">
+              Open
+            </Button>
+          </Stack>
+
+          <Typography
+            variant="caption"
+            sx={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}
+          >
+            Products used last time
+          </Typography>
+
+          {prevSummary.product_names.length === 0 ? (
+            <Typography color="text.secondary">No products logged on that appointment.</Typography>
+          ) : (
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              {prevSummary.product_names.slice(0, 10).map((name) => (
+                <Chip key={name} size="small" color="primary" variant="outlined" label={name} />
+              ))}
+              {prevSummary.product_names.length > 10 ? (
+                <Typography color="text.secondary" sx={{ alignSelf: "center" }}>
+                  +{prevSummary.product_names.length - 10} more
+                </Typography>
+              ) : null}
+            </Stack>
+          )}
+
+          {prevSummary.notes ? (
+            <Box>
+              <Typography
+                variant="caption"
+                sx={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}
+              >
+                Notes
+              </Typography>
+              <Typography>{prevSummary.notes}</Typography>
+            </Box>
+          ) : null}
+        </Stack>
+      )}
+    </Box>
+
+    <Divider />
+
+    {/* All previous appointments list */}
+    <Box>
+      <Typography
+        variant="caption"
+        sx={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}
+      >
+        All Previous Appointments
+      </Typography>
+
+      {!prevListLoaded ? (
+        <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+          Click “Load all” to fetch the full history (last 25).
+        </Typography>
+      ) : prevListLoading ? (
+        <Typography sx={{ mt: 0.5 }}>Loading…</Typography>
+      ) : prevList.length === 0 ? (
+        <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+          No previous appointments found.
+        </Typography>
+      ) : (
+        <Paper variant="outlined" sx={{ mt: 1 }}>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Date/Time</TableCell>
+                <TableCell>Service</TableCell>
+                <TableCell align="right">Product Cost</TableCell>
+                <TableCell align="right">Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {prevList.map((p) => (
+                <TableRow key={p.id} hover>
+                  <TableCell>{fmtDateTime(p.appointment_datetime)}</TableCell>
+                  <TableCell>{p.service_name ?? "—"}</TableCell>
+                  <TableCell align="right">
+                    {p.total_product_cost != null ? fmtMoney(p.total_product_cost) : "—"}
+                  </TableCell>
+                  <TableCell align="right">
+                    <Button href={`/appointments/${p.id}`} component="a" size="small" variant="outlined">
+                      Open
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Paper>
+      )}
+    </Box>
+  </Stack>
+</Paper>
 
       {/* Add usage dialog */}
       <Dialog open={openAdd} onClose={() => setOpenAdd(false)} fullWidth maxWidth="sm">

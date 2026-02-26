@@ -20,7 +20,7 @@ import {
   Typography,
 } from "@mui/material";
 import { supabase } from "@/lib/supabase/client";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 type ClientOption = {
   id: string;
@@ -55,6 +55,13 @@ export default function AppointmentsPage() {
   const [loading, setLoading] = React.useState(true);
   const [open, setOpen] = React.useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const shouldOpen = searchParams.get("new") === "1";
+  const [filters, setFilters] = React.useState({
+    client_id: "",
+    start_date: "", // "YYYY-MM-DD"
+    end_date: "",   // "YYYY-MM-DD"
+  });
 
   const [form, setForm] = React.useState({
     client_id: "",
@@ -63,6 +70,10 @@ export default function AppointmentsPage() {
     service_name: "",
     notes: "",
   });
+
+  React.useEffect(() => {
+    if (shouldOpen) setOpen(true);
+  }, [shouldOpen]);
 
   async function loadClients() {
     const { data, error } = await supabase
@@ -78,34 +89,88 @@ export default function AppointmentsPage() {
     setClients((data ?? []) as ClientOption[]);
   }
 
-  async function loadAppointments() {
-    setLoading(true);
+//   async function loadAppointments() {
+//     setLoading(true);
 
-    // Join clients for display:
-    // This expects FK appointments.client_id -> clients.id
-    const { data, error } = await supabase
-      .from("appointments")
-      .select(
-        "id,client_id,appointment_datetime,service_name,notes,total_product_cost,created_at,clients(first_name,last_name)"
-      )
-      .order("appointment_datetime", { ascending: true });
+//     // Join clients for display:
+//     // This expects FK appointments.client_id -> clients.id
+//     const { data, error } = await supabase
+//       .from("appointments")
+//       .select(
+//         "id,client_id,appointment_datetime,service_name,notes,total_product_cost,created_at,clients(first_name,last_name)"
+//       )
+//       .order("appointment_datetime", { ascending: true });
 
-    if (error) {
-      console.error(error);
-      setRows([]);
-    } else {
-      const normalized =
-        (data ?? []).map((a: any) => ({
-          ...a,
-          total_product_cost:
-            a.total_product_cost == null ? null : Number(a.total_product_cost),
-        })) as AppointmentRow[];
+//     if (error) {
+//       console.error(error);
+//       setRows([]);
+//     } else {
+//       const normalized =
+//         (data ?? []).map((a: any) => ({
+//           ...a,
+//           total_product_cost:
+//             a.total_product_cost == null ? null : Number(a.total_product_cost),
+//         })) as AppointmentRow[];
 
-      setRows(normalized);
-    }
+//       setRows(normalized);
+//     }
 
-    setLoading(false);
+//     setLoading(false);
+//   }
+
+  function startOfDayIsoLocal(dateStr: string) {
+    // dateStr: "YYYY-MM-DD"
+    const d = new Date(`${dateStr}T00:00:00`);
+    return d.toISOString();
   }
+
+  function endOfDayIsoLocal(dateStr: string) {
+    // inclusive end of day
+    const d = new Date(`${dateStr}T23:59:59.999`);
+    return d.toISOString();
+  }
+
+async function loadAppointments(activeFilters = filters) {
+  setLoading(true);
+
+  let q = supabase
+    .from("appointments")
+    .select(
+      "id,client_id,appointment_datetime,service_name,notes,total_product_cost,created_at,clients(first_name,last_name)"
+    );
+
+  // Client filter
+  if (activeFilters.client_id) {
+    q = q.eq("client_id", activeFilters.client_id);
+  }
+
+  // Date range filter (based on appointment_datetime)
+  if (activeFilters.start_date) {
+    q = q.gte("appointment_datetime", startOfDayIsoLocal(activeFilters.start_date));
+  }
+  if (activeFilters.end_date) {
+    q = q.lte("appointment_datetime", endOfDayIsoLocal(activeFilters.end_date));
+  }
+
+  // Sort newest first (or flip to ascending if you want upcoming first)
+  const { data, error } = await q.order("appointment_datetime", { ascending: false });
+
+  if (error) {
+    console.error(error);
+    setRows([]);
+  } else {
+    const normalized =
+      (data ?? []).map((a: any) => ({
+        ...a,
+        total_product_cost:
+          a.total_product_cost == null ? null : Number(a.total_product_cost),
+      })) as AppointmentRow[];
+
+    setRows(normalized);
+  }
+
+  setLoading(false);
+}
 
   React.useEffect(() => {
     // Load both on mount
@@ -149,22 +214,110 @@ export default function AppointmentsPage() {
       return;
     }
 
-    setOpen(false);
+    //setOpen(false);
+    closeDialog();
     setForm({ client_id: "", appointment_local: "", service_name: "", notes: "" });
     await loadAppointments();
   }
 
+  function closeDialog() {
+    setOpen(false);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("new");
+    router.replace(
+      `/clients${params.toString() ? `?${params.toString()}` : ""}`,
+    );
+  }
+
+
   return (
     <Stack spacing={2}>
-      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
         <Typography variant="h4">Appointments</Typography>
         <Button variant="contained" onClick={() => setOpen(true)}>
           Add Appointment
         </Button>
       </Box>
 
-      <Paper variant="outlined">
-        <Table size="small">
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Stack spacing={2}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+            Filters
+          </Typography>
+
+          <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+            <TextField
+              select
+              label="Client"
+              value={filters.client_id}
+              onChange={(e) =>
+                setFilters((f) => ({ ...f, client_id: e.target.value }))
+              }
+              sx={{ minWidth: 240 }}
+            >
+              <MenuItem value="">All clients</MenuItem>
+              {clients.map((c) => (
+                <MenuItem key={c.id} value={c.id}>
+                  {c.first_name} {c.last_name ?? ""}
+                </MenuItem>
+              ))}
+            </TextField>
+
+            <TextField
+              label="Start date"
+              type="date"
+              value={filters.start_date}
+              onChange={(e) =>
+                setFilters((f) => ({ ...f, start_date: e.target.value }))
+              }
+              InputLabelProps={{ shrink: true }}
+              sx={{ minWidth: 180 }}
+            />
+
+            <TextField
+              label="End date"
+              type="date"
+              value={filters.end_date}
+              onChange={(e) =>
+                setFilters((f) => ({ ...f, end_date: e.target.value }))
+              }
+              InputLabelProps={{ shrink: true }}
+              sx={{ minWidth: 180 }}
+            />
+
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Button
+                variant="contained"
+                onClick={() => loadAppointments(filters)}
+              >
+                Apply
+              </Button>
+              <Button
+                onClick={() => {
+                  const cleared = {
+                    client_id: "",
+                    start_date: "",
+                    end_date: "",
+                  };
+                  setFilters(cleared);
+                  loadAppointments(cleared);
+                }}
+              >
+                Clear
+              </Button>
+            </Stack>
+          </Stack>
+        </Stack>
+      </Paper>
+
+    <Paper variant="outlined" sx={{ overflowX: "hidden", maxWidth: "100%" }}>
+        <Table size="small" sx={{ minWidth: 900 }}>
           <TableHead>
             <TableRow>
               <TableCell>Date/Time</TableCell>
@@ -222,7 +375,7 @@ export default function AppointmentsPage() {
         </Table>
       </Paper>
 
-      <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
+      <Dialog open={open} onClose={closeDialog} fullWidth maxWidth="sm">
         <DialogTitle>Add Appointment</DialogTitle>
 
         <DialogContent>
@@ -231,7 +384,9 @@ export default function AppointmentsPage() {
               select
               label="Client"
               value={form.client_id}
-              onChange={(e) => setForm((f) => ({ ...f, client_id: e.target.value }))}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, client_id: e.target.value }))
+              }
               required
             >
               {clients.length === 0 ? (
@@ -251,7 +406,9 @@ export default function AppointmentsPage() {
               label="Date & time"
               type="datetime-local"
               value={form.appointment_local}
-              onChange={(e) => setForm((f) => ({ ...f, appointment_local: e.target.value }))}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, appointment_local: e.target.value }))
+              }
               InputLabelProps={{ shrink: true }}
               required
             />
@@ -259,14 +416,18 @@ export default function AppointmentsPage() {
             <TextField
               label="Service name (optional)"
               value={form.service_name}
-              onChange={(e) => setForm((f) => ({ ...f, service_name: e.target.value }))}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, service_name: e.target.value }))
+              }
               placeholder="e.g. All-over color, haircut, highlights"
             />
 
             <TextField
               label="Notes (optional)"
               value={form.notes}
-              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, notes: e.target.value }))
+              }
               multiline
               minRows={3}
             />
@@ -274,7 +435,7 @@ export default function AppointmentsPage() {
         </DialogContent>
 
         <DialogActions>
-          <Button onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={closeDialog}>Cancel</Button>
           <Button
             variant="contained"
             onClick={addAppointment}

@@ -20,6 +20,7 @@ import {
   Paper,
 } from "@mui/material";
 import { supabase } from "@/lib/supabase/client";
+import { useRouter, useSearchParams } from "next/navigation";
 
 type ProductRow = {
   id: string;
@@ -37,6 +38,13 @@ export default function ProductsPage() {
   const [rows, setRows] = React.useState<ProductRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [open, setOpen] = React.useState(false);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const shouldOpen = searchParams.get("new") === "1";
+
+  React.useEffect(() => {
+    if (shouldOpen) setOpen(true);
+  }, [shouldOpen]);
 
   const [form, setForm] = React.useState({
     name: "",
@@ -98,9 +106,19 @@ export default function ProductsPage() {
       return;
     }
 
-    setOpen(false);
+    //setOpen(false);
+    closeDialog();
     setForm({ name: "", brand: "", total_cost: "", total_size: "", unit: "oz" });
     await loadProducts();
+  }
+
+  function closeDialog() {
+    setOpen(false);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("new");
+    router.replace(
+      `/clients${params.toString() ? `?${params.toString()}` : ""}`,
+    );
   }
 
   return (
@@ -112,8 +130,8 @@ export default function ProductsPage() {
         </Button>
       </Box>
 
-      <Paper variant="outlined">
-        <Table size="small">
+      <Paper variant="outlined" sx={{ overflowX: "auto", maxWidth: "100%" }}>
+        <Table size="small" sx={{ minWidth: 800 }}>
           <TableHead>
             <TableRow>
               <TableCell>Name</TableCell>
@@ -151,7 +169,7 @@ export default function ProductsPage() {
         </Table>
       </Paper>
 
-      <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
+      <Dialog open={open} onClose={closeDialog} fullWidth maxWidth="sm">
         <DialogTitle>Add Product</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
@@ -160,6 +178,7 @@ export default function ProductsPage() {
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
               required
+              autoFocus
             />
             <TextField
               label="Brand (optional)"
@@ -202,7 +221,7 @@ export default function ProductsPage() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={closeDialog}>Cancel</Button>
           <Button variant="contained" onClick={addProduct}>
             Save
           </Button>

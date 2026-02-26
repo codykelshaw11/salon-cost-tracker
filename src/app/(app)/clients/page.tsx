@@ -13,12 +13,14 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
   TextField,
   Typography,
 } from "@mui/material";
 import { supabase } from "@/lib/supabase/client";
+import { useRouter, useSearchParams } from "next/navigation";
 
 type ClientRow = {
   id: string;
@@ -34,6 +36,9 @@ type ClientRow = {
 export default function ClientsPage() {
   const [rows, setRows] = React.useState<ClientRow[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const shouldOpen = searchParams.get("new") === "1";
   const [open, setOpen] = React.useState(false);
 
   const [form, setForm] = React.useState({
@@ -43,6 +48,10 @@ export default function ClientsPage() {
     email: "",
     notes: "",
   });
+
+  React.useEffect(() => {
+    if (shouldOpen) setOpen(true);
+  }, [shouldOpen]);
 
   async function loadClients() {
     setLoading(true);
@@ -89,22 +98,52 @@ export default function ClientsPage() {
       return;
     }
 
-    setOpen(false);
+    //setOpen(false);
+    closeDialog();
     setForm({ first_name: "", last_name: "", phone: "", email: "", notes: "" });
     await loadClients();
   }
 
+  function closeDialog() {
+    setOpen(false);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("new");
+    router.replace(
+      `/clients${params.toString() ? `?${params.toString()}` : ""}`,
+    );
+  }
+
   return (
     <Stack spacing={2}>
-      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
         <Typography variant="h4">Clients</Typography>
         <Button variant="contained" onClick={() => setOpen(true)}>
           Add Client
         </Button>
       </Box>
 
-      <Paper variant="outlined">
-        <Table size="small">
+    <Paper sx={{ width: '100%', overflow: 'hidden'}}>
+      <TableContainer
+        component={Paper}
+        variant="outlined"
+        sx={{
+          maxWidth: "100%",
+          overflowX: "auto",
+          WebkitOverflowScrolling: "touch",
+        }}
+      >
+        <Table
+          size="small"
+          sx={{
+            minWidth: 800, // adjust per page
+          }}
+        >
           <TableHead>
             <TableRow>
               <TableCell>Name</TableCell>
@@ -132,16 +171,21 @@ export default function ClientsPage() {
                   <TableCell>{c.phone ?? "—"}</TableCell>
                   <TableCell>{c.email ?? "—"}</TableCell>
                   <TableCell>
-                    {c.notes ? (c.notes.length > 60 ? c.notes.slice(0, 60) + "…" : c.notes) : "—"}
+                    {c.notes
+                      ? c.notes.length > 60
+                        ? c.notes.slice(0, 60) + "…"
+                        : c.notes
+                      : "—"}
                   </TableCell>
                 </TableRow>
               ))
             )}
           </TableBody>
         </Table>
+      </TableContainer>
       </Paper>
 
-      <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
+      <Dialog open={open} onClose={closeDialog} fullWidth maxWidth="sm">
         <DialogTitle>Add Client</DialogTitle>
 
         <DialogContent>
@@ -150,14 +194,19 @@ export default function ClientsPage() {
               <TextField
                 label="First name"
                 value={form.first_name}
-                onChange={(e) => setForm((f) => ({ ...f, first_name: e.target.value }))}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, first_name: e.target.value }))
+                }
                 required
                 fullWidth
+                autoFocus
               />
               <TextField
                 label="Last name (optional)"
                 value={form.last_name}
-                onChange={(e) => setForm((f) => ({ ...f, last_name: e.target.value }))}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, last_name: e.target.value }))
+                }
                 fullWidth
               />
             </Stack>
@@ -166,13 +215,17 @@ export default function ClientsPage() {
               <TextField
                 label="Phone (optional)"
                 value={form.phone}
-                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, phone: e.target.value }))
+                }
                 fullWidth
               />
               <TextField
                 label="Email (optional)"
                 value={form.email}
-                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, email: e.target.value }))
+                }
                 type="email"
                 fullWidth
               />
@@ -181,7 +234,9 @@ export default function ClientsPage() {
             <TextField
               label="Notes (optional)"
               value={form.notes}
-              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, notes: e.target.value }))
+              }
               multiline
               minRows={3}
             />
@@ -189,12 +244,12 @@ export default function ClientsPage() {
         </DialogContent>
 
         <DialogActions>
-          <Button onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={closeDialog}>Cancel</Button>
           <Button variant="contained" onClick={addClient}>
             Save
           </Button>
         </DialogActions>
       </Dialog>
-    </Stack>
+     </Stack>
   );
 }
