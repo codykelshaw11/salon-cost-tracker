@@ -80,6 +80,8 @@ export default function AppointmentDetailPage() {
   const params = useParams<{ id: string }>();
   const appointmentId = params?.id;
 
+  const GRAMS_PER_OUNCE = 30;
+
   const [appt, setAppt] = React.useState<Appointment | null>(null);
   const [products, setProducts] = React.useState<Product[]>([]);
   const [usage, setUsage] = React.useState<UsageRow[]>([]);
@@ -307,64 +309,63 @@ async function loadAllPreviousAppointments() {
   }
 
   async function addUsageLine() {
-    if (!appointmentId) return;
+  if (!appointmentId) return;
 
-    const productId = addForm.product_id;
-    const amountUsed = Number(addForm.amount_used);
+  const productId = addForm.product_id;
+  const amountUsed = Number(addForm.amount_used);
 
-    if (!productId) {
-      alert("Please select a product.");
-      return;
-    }
-    if (!Number.isFinite(amountUsed) || amountUsed <= 0) {
-      alert("Amount used must be a number greater than 0.");
-      return;
-    }
-
-    const product = products.find((p) => p.id === productId);
-    if (!product) {
-      alert("Selected product not found.");
-      return;
-    }
-
-    // Determine cost per unit (prefer stored/generated cost_per_unit)
-    const costPerUnit =
-      product.cost_per_unit != null
-        ? product.cost_per_unit
-        : product.total_size > 0
-        ? product.total_cost / product.total_size
-        : null;
-
-    if (costPerUnit == null || !Number.isFinite(costPerUnit)) {
-      alert("Product cost per unit could not be determined.");
-      return;
-    }
-
-    const totalCost = amountUsed * costPerUnit;
-
-    const payload = {
-      appointment_id: appointmentId,
-      product_id: productId,
-      amount_used: amountUsed,
-      unit: product.unit, // keep usage unit aligned to product unit
-      cost_per_unit_at_time: costPerUnit,
-      total_cost: totalCost,
-    };
-
-    const { error } = await supabase.from("appointment_products").insert(payload);
-
-    if (error) {
-      console.error(error);
-      alert("Failed to add product usage. Check console.");
-      return;
-    }
-
-    setOpenAdd(false);
-    setAddForm({ product_id: "", amount_used: "" });
-
-    await loadAll();
-    await recalcAndPersistTotal();
+  if (!productId) {
+    alert("Please select a product.");
+    return;
   }
+  if (!Number.isFinite(amountUsed) || amountUsed <= 0) {
+    alert("Grams used must be a number greater than 0.");
+    return;
+  }
+
+  const product = products.find((p) => p.id === productId);
+  if (!product) {
+    alert("Selected product not found.");
+    return;
+  }
+
+  // Convert the product's bottle size to grams, then calculate cost per gram
+  const totalSizeInGrams = product.total_size > 0 ? product.total_size * GRAMS_PER_OUNCE : null;
+  const costPerGram =
+    totalSizeInGrams && Number.isFinite(totalSizeInGrams)
+      ? product.total_cost / totalSizeInGrams
+      : null;
+
+  if (costPerGram == null || !Number.isFinite(costPerGram)) {
+    alert("Product cost per gram could not be determined.");
+    return;
+  }
+
+  const totalCost = amountUsed * costPerGram;
+
+  const payload = {
+    appointment_id: appointmentId,
+    product_id: productId,
+    amount_used: amountUsed,
+    unit: "g",
+    cost_per_unit_at_time: costPerGram,
+    total_cost: totalCost,
+  };
+
+  const { error } = await supabase.from("appointment_products").insert(payload);
+
+  if (error) {
+    console.error(error);
+    alert("Failed to add product usage. Check console.");
+    return;
+  }
+
+  setOpenAdd(false);
+  setAddForm({ product_id: "", amount_used: "" });
+
+  await loadAll();
+  await recalcAndPersistTotal();
+}
 
   async function deleteUsageLine(usageId: string) {
     if (!confirm("Delete this product usage line?")) return;
@@ -387,7 +388,13 @@ async function loadAllPreviousAppointments() {
 
   return (
     <Stack spacing={2}>
-      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
         <Stack spacing={0.5}>
           <Typography variant="h4">Appointment</Typography>
           {appt ? (
@@ -400,7 +407,11 @@ async function loadAllPreviousAppointments() {
           )}
         </Stack>
 
-        <Button variant="contained" onClick={() => setOpenAdd(true)} disabled={loading || !appt}>
+        <Button
+          variant="contained"
+          onClick={() => setOpenAdd(true)}
+          disabled={loading || !appt}
+        >
           Add Product Used
         </Button>
       </Box>
@@ -420,7 +431,9 @@ async function loadAllPreviousAppointments() {
               <Typography color="text.secondary" variant="body2">
                 Date/Time
               </Typography>
-              <Typography>{appt ? fmtDateTime(appt.appointment_datetime) : "—"}</Typography>
+              <Typography>
+                {appt ? fmtDateTime(appt.appointment_datetime) : "—"}
+              </Typography>
             </Box>
             <Box>
               <Typography color="text.secondary" variant="body2">
@@ -446,12 +459,12 @@ async function loadAllPreviousAppointments() {
         </Stack>
       </Paper>
 
-    <Paper variant="outlined" sx={{ overflowX: "auto", maxWidth: "100%" }}>
+      <Paper variant="outlined" sx={{ overflowX: "auto", maxWidth: "100%" }}>
         <Table size="small" sx={{ minWidth: 900 }}>
           <TableHead>
             <TableRow>
               <TableCell>Product</TableCell>
-              <TableCell align="right">Amount Used</TableCell>
+              <TableCell align="right">Weight Used (g)</TableCell>
               <TableCell>Unit</TableCell>
               <TableCell align="right">Cost / Unit</TableCell>
               <TableCell align="right">Line Cost</TableCell>
@@ -477,12 +490,21 @@ async function loadAllPreviousAppointments() {
                 return (
                   <TableRow key={u.id} hover>
                     <TableCell>{productLabel}</TableCell>
-                    <TableCell align="right">{u.amount_used.toFixed(2)}</TableCell>
-                    <TableCell>{u.unit}</TableCell>
-                    <TableCell align="right">{fmtMoney(u.cost_per_unit_at_time)}</TableCell>
-                    <TableCell align="right">{fmtMoney(u.total_cost)}</TableCell>
                     <TableCell align="right">
-                      <Button color="error" onClick={() => deleteUsageLine(u.id)}>
+                      {u.amount_used.toFixed(2)}
+                    </TableCell>
+                    <TableCell>{u.unit}</TableCell>
+                    <TableCell align="right">
+                      {fmtMoney(u.cost_per_unit_at_time)}
+                    </TableCell>
+                    <TableCell align="right">
+                      {fmtMoney(u.total_cost)}
+                    </TableCell>
+                    <TableCell align="right">
+                      <Button
+                        color="error"
+                        onClick={() => deleteUsageLine(u.id)}
+                      >
                         Delete
                       </Button>
                     </TableCell>
@@ -495,165 +517,219 @@ async function loadAllPreviousAppointments() {
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
-  <Stack spacing={2}>
-    <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-      <Typography variant="h6">Previous Appointments</Typography>
-
-      <Stack direction="row" spacing={1}>
-        <Button
-          variant="outlined"
-          onClick={loadPreviousSummary}
-          disabled={!appt || prevLoading}
-        >
-          {prevSummaryLoaded ? "Reload previous" : "Load previous"}
-        </Button>
-
-        <Button
-          variant="outlined"
-          onClick={loadAllPreviousAppointments}
-          disabled={!appt || prevListLoading}
-        >
-          {prevListLoaded ? "Reload all" : "Load all"}
-        </Button>
-      </Stack>
-    </Box>
-
-    {/* Previous appointment summary */}
-    <Box>
-      <Typography
-        variant="caption"
-        sx={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}
-      >
-        Most Recent Previous Appointment
-      </Typography>
-
-      {!prevSummaryLoaded ? (
-        <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-          Loading previous appointments...
-        </Typography>
-      ) : prevLoading ? (
-        <Typography sx={{ mt: 0.5 }}>Loading…</Typography>
-      ) : prevSummary == null ? (
-        <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-          No previous appointments found for this client.
-        </Typography>
-      ) : (
-        <Stack spacing={1} sx={{ mt: 1 }}>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ sm: "center" }}>
-            <Typography sx={{ fontWeight: 600 }}>
-              {fmtDateTime(prevSummary.appointment_datetime)}
-            </Typography>
-            <Typography color="text.secondary">
-              {prevSummary.service_name ?? "—"}
-            </Typography>
-            <Typography color="text.secondary">
-              Total product cost:{" "}
-              {prevSummary.total_product_cost != null
-                ? fmtMoney(prevSummary.total_product_cost)
-                : "—"}
-            </Typography>
-
-            <Box sx={{ flexGrow: 1 }} />
-
-            <Button href={`/appointments/${prevSummary.id}`} component="a">
-              Open
-            </Button>
-          </Stack>
-
-          <Typography
-            variant="caption"
-            sx={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}
+        <Stack spacing={2}>
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
           >
-            Products used last time
-          </Typography>
+            <Typography variant="h6">Previous Appointments</Typography>
 
-          {prevSummary.product_names.length === 0 ? (
-            <Typography color="text.secondary">No products logged on that appointment.</Typography>
-          ) : (
-            <Stack direction="row" spacing={1} flexWrap="wrap">
-              {prevSummary.product_names.slice(0, 10).map((name) => (
-                <Chip key={name} size="small" color="primary" variant="outlined" label={name} />
-              ))}
-              {prevSummary.product_names.length > 10 ? (
-                <Typography color="text.secondary" sx={{ alignSelf: "center" }}>
-                  +{prevSummary.product_names.length - 10} more
-                </Typography>
-              ) : null}
-            </Stack>
-          )}
-
-          {prevSummary.notes ? (
-            <Box>
-              <Typography
-                variant="caption"
-                sx={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}
+            <Stack direction="row" spacing={1}>
+              <Button
+                variant="outlined"
+                onClick={loadPreviousSummary}
+                disabled={!appt || prevLoading}
               >
-                Notes
+                {prevSummaryLoaded ? "Reload previous" : "Load previous"}
+              </Button>
+
+              <Button
+                variant="outlined"
+                onClick={loadAllPreviousAppointments}
+                disabled={!appt || prevListLoading}
+              >
+                {prevListLoaded ? "Reload all" : "Load all"}
+              </Button>
+            </Stack>
+          </Box>
+
+          {/* Previous appointment summary */}
+          <Box>
+            <Typography
+              variant="caption"
+              sx={{
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: 0.5,
+              }}
+            >
+              Most Recent Previous Appointment
+            </Typography>
+
+            {!prevSummaryLoaded ? (
+              <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                Loading previous appointments...
               </Typography>
-              <Typography>{prevSummary.notes}</Typography>
-            </Box>
-          ) : null}
+            ) : prevLoading ? (
+              <Typography sx={{ mt: 0.5 }}>Loading…</Typography>
+            ) : prevSummary == null ? (
+              <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                No previous appointments found for this client.
+              </Typography>
+            ) : (
+              <Stack spacing={1} sx={{ mt: 1 }}>
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={2}
+                  alignItems={{ sm: "center" }}
+                >
+                  <Typography sx={{ fontWeight: 600 }}>
+                    {fmtDateTime(prevSummary.appointment_datetime)}
+                  </Typography>
+                  <Typography color="text.secondary">
+                    {prevSummary.service_name ?? "—"}
+                  </Typography>
+                  <Typography color="text.secondary">
+                    Total product cost:{" "}
+                    {prevSummary.total_product_cost != null
+                      ? fmtMoney(prevSummary.total_product_cost)
+                      : "—"}
+                  </Typography>
+
+                  <Box sx={{ flexGrow: 1 }} />
+
+                  <Button
+                    href={`/appointments/${prevSummary.id}`}
+                    component="a"
+                  >
+                    Open
+                  </Button>
+                </Stack>
+
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.5,
+                  }}
+                >
+                  Products used last time
+                </Typography>
+
+                {prevSummary.product_names.length === 0 ? (
+                  <Typography color="text.secondary">
+                    No products logged on that appointment.
+                  </Typography>
+                ) : (
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    {prevSummary.product_names.slice(0, 10).map((name) => (
+                      <Chip
+                        key={name}
+                        size="small"
+                        color="primary"
+                        variant="outlined"
+                        label={name}
+                      />
+                    ))}
+                    {prevSummary.product_names.length > 10 ? (
+                      <Typography
+                        color="text.secondary"
+                        sx={{ alignSelf: "center" }}
+                      >
+                        +{prevSummary.product_names.length - 10} more
+                      </Typography>
+                    ) : null}
+                  </Stack>
+                )}
+
+                {prevSummary.notes ? (
+                  <Box>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        letterSpacing: 0.5,
+                      }}
+                    >
+                      Notes
+                    </Typography>
+                    <Typography>{prevSummary.notes}</Typography>
+                  </Box>
+                ) : null}
+              </Stack>
+            )}
+          </Box>
+
+          <Divider />
+
+          {/* All previous appointments list */}
+          <Box>
+            <Typography
+              variant="caption"
+              sx={{
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: 0.5,
+              }}
+            >
+              All Previous Appointments
+            </Typography>
+
+            {!prevListLoaded ? (
+              <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                Click “Load all” to fetch the full history (last 25).
+              </Typography>
+            ) : prevListLoading ? (
+              <Typography sx={{ mt: 0.5 }}>Loading…</Typography>
+            ) : prevList.length === 0 ? (
+              <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                No previous appointments found.
+              </Typography>
+            ) : (
+              <Paper variant="outlined" sx={{ mt: 1 }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Date/Time</TableCell>
+                      <TableCell>Service</TableCell>
+                      <TableCell align="right">Product Cost</TableCell>
+                      <TableCell align="right">Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {prevList.map((p) => (
+                      <TableRow key={p.id} hover>
+                        <TableCell>
+                          {fmtDateTime(p.appointment_datetime)}
+                        </TableCell>
+                        <TableCell>{p.service_name ?? "—"}</TableCell>
+                        <TableCell align="right">
+                          {p.total_product_cost != null
+                            ? fmtMoney(p.total_product_cost)
+                            : "—"}
+                        </TableCell>
+                        <TableCell align="right">
+                          <Button
+                            href={`/appointments/${p.id}`}
+                            component="a"
+                            size="small"
+                            variant="outlined"
+                          >
+                            Open
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Paper>
+            )}
+          </Box>
         </Stack>
-      )}
-    </Box>
-
-    <Divider />
-
-    {/* All previous appointments list */}
-    <Box>
-      <Typography
-        variant="caption"
-        sx={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}
-      >
-        All Previous Appointments
-      </Typography>
-
-      {!prevListLoaded ? (
-        <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-          Click “Load all” to fetch the full history (last 25).
-        </Typography>
-      ) : prevListLoading ? (
-        <Typography sx={{ mt: 0.5 }}>Loading…</Typography>
-      ) : prevList.length === 0 ? (
-        <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-          No previous appointments found.
-        </Typography>
-      ) : (
-        <Paper variant="outlined" sx={{ mt: 1 }}>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Date/Time</TableCell>
-                <TableCell>Service</TableCell>
-                <TableCell align="right">Product Cost</TableCell>
-                <TableCell align="right">Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {prevList.map((p) => (
-                <TableRow key={p.id} hover>
-                  <TableCell>{fmtDateTime(p.appointment_datetime)}</TableCell>
-                  <TableCell>{p.service_name ?? "—"}</TableCell>
-                  <TableCell align="right">
-                    {p.total_product_cost != null ? fmtMoney(p.total_product_cost) : "—"}
-                  </TableCell>
-                  <TableCell align="right">
-                    <Button href={`/appointments/${p.id}`} component="a" size="small" variant="outlined">
-                      Open
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Paper>
-      )}
-    </Box>
-  </Stack>
-</Paper>
+      </Paper>
 
       {/* Add usage dialog */}
-      <Dialog open={openAdd} onClose={() => setOpenAdd(false)} fullWidth maxWidth="sm">
+      <Dialog
+        open={openAdd}
+        onClose={() => setOpenAdd(false)}
+        fullWidth
+        maxWidth="sm"
+      >
         <DialogTitle>Add Product Used</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
@@ -661,7 +737,9 @@ async function loadAllPreviousAppointments() {
               select
               label="Product"
               value={addForm.product_id}
-              onChange={(e) => setAddForm((f) => ({ ...f, product_id: e.target.value }))}
+              onChange={(e) =>
+                setAddForm((f) => ({ ...f, product_id: e.target.value }))
+              }
               required
             >
               {products.length === 0 ? (
@@ -672,23 +750,26 @@ async function loadAllPreviousAppointments() {
                 products.map((p) => (
                   <MenuItem key={p.id} value={p.id}>
                     {p.name}
-                    {p.brand ? ` (${p.brand})` : ""} —{" "}
-                    {p.cost_per_unit != null
-                      ? `$${p.cost_per_unit.toFixed(4)}/${p.unit}`
-                      : `$${(p.total_cost / p.total_size).toFixed(4)}/${p.unit}`}
+                    {p.brand ? ` (${p.brand})` : ""} — $
+                    {(p.total_cost / (p.total_size * GRAMS_PER_OUNCE)).toFixed(
+                      4,
+                    )}
+                    /g
                   </MenuItem>
                 ))
               )}
             </TextField>
 
             <TextField
-              label="Amount used"
+              label="Weight used (grams)"
               value={addForm.amount_used}
-              onChange={(e) => setAddForm((f) => ({ ...f, amount_used: e.target.value }))}
+              onChange={(e) =>
+                setAddForm((f) => ({ ...f, amount_used: e.target.value }))
+              }
               type="number"
               inputProps={{ step: "0.01", min: "0" }}
               required
-              helperText="Enter how much of the product was used for this appointment."
+              helperText="Enter the amount used in grams. Product cost will be calculated automatically by gram."
             />
           </Stack>
         </DialogContent>

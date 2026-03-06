@@ -18,9 +18,14 @@ import {
   TableHead,
   TableRow,
   Paper,
+  TableContainer,
 } from "@mui/material";
 import { supabase } from "@/lib/supabase/client";
-import { useRouter, useSearchParams } from "next/navigation";
+
+type Category = {
+  id: string;
+  name: string;
+};
 
 type ProductRow = {
   id: string;
@@ -30,21 +35,17 @@ type ProductRow = {
   total_size: number;
   unit: string;
   cost_per_unit?: number | null;
+  category_id: string | null;
+  product_categories?: { name: string } | null; // join
 };
 
 const UNITS = ["oz", "ml", "g"] as const;
 
 export default function ProductsPage() {
   const [rows, setRows] = React.useState<ProductRow[]>([]);
+  const [categories, setCategories] = React.useState<Category[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [open, setOpen] = React.useState(false);
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const shouldOpen = searchParams.get("new") === "1";
-
-  React.useEffect(() => {
-    if (shouldOpen) setOpen(true);
-  }, [shouldOpen]);
 
   const [form, setForm] = React.useState({
     name: "",
@@ -52,20 +53,39 @@ export default function ProductsPage() {
     total_cost: "",
     total_size: "",
     unit: "oz",
+    category_id: "",
   });
+
+  async function loadCategories() {
+    const { data, error } = await supabase
+      .from("product_categories")
+      .select("id,name")
+      .order("name", { ascending: true });
+
+    if (error) {
+      console.error(error);
+      setCategories([]);
+      return;
+    }
+
+    setCategories((data ?? []) as Category[]);
+  }
 
   async function loadProducts() {
     setLoading(true);
+
     const { data, error } = await supabase
       .from("products")
-      .select("id,name,brand,total_cost,total_size,unit,cost_per_unit")
+      .select(
+        "id,name,brand,total_cost,total_size,unit,cost_per_unit,category_id,product_categories(name)"
+      )
       .order("created_at", { ascending: false });
 
     if (error) {
       console.error(error);
       setRows([]);
     } else {
-      // Supabase returns numerics as strings sometimes depending on config; normalize.
+      // Normalize numeric columns
       const normalized =
         (data ?? []).map((p: any) => ({
           ...p,
@@ -73,21 +93,46 @@ export default function ProductsPage() {
           total_size: Number(p.total_size),
           cost_per_unit: p.cost_per_unit == null ? null : Number(p.cost_per_unit),
         })) as ProductRow[];
+
       setRows(normalized);
     }
+
     setLoading(false);
   }
 
   React.useEffect(() => {
-    loadProducts();
+    (async () => {
+      await loadCategories();
+      await loadProducts();
+    })();
   }, []);
+
+  function closeDialog() {
+    setOpen(false);
+    setForm({
+      name: "",
+      brand: "",
+      total_cost: "",
+      total_size: "",
+      unit: "oz",
+      category_id: "",
+    });
+  }
 
   async function addProduct() {
     const total_cost = Number(form.total_cost);
     const total_size = Number(form.total_size);
 
-    if (!form.name.trim() || !Number.isFinite(total_cost) || !Number.isFinite(total_size) || total_size <= 0) {
-      alert("Please enter name, total cost, and total size (size must be > 0).");
+    if (!form.name.trim()) {
+      alert("Product name is required.");
+      return;
+    }
+    if (!Number.isFinite(total_cost) || total_cost < 0) {
+      alert("Bottle cost must be a valid number.");
+      return;
+    }
+    if (!Number.isFinite(total_size) || total_size <= 0) {
+      alert("Bottle size must be a valid number greater than 0.");
       return;
     }
 
@@ -97,28 +142,19 @@ export default function ProductsPage() {
       total_cost,
       total_size,
       unit: form.unit,
+      category_id: form.category_id ? form.category_id : null,
     };
 
     const { error } = await supabase.from("products").insert(payload);
+
     if (error) {
       console.error(error);
       alert("Failed to add product. Check console.");
       return;
     }
 
-    //setOpen(false);
     closeDialog();
-    setForm({ name: "", brand: "", total_cost: "", total_size: "", unit: "oz" });
     await loadProducts();
-  }
-
-  function closeDialog() {
-    setOpen(false);
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("new");
-    router.replace(
-      `/clients${params.toString() ? `?${params.toString()}` : ""}`,
-    );
   }
 
   return (
@@ -130,32 +166,36 @@ export default function ProductsPage() {
         </Button>
       </Box>
 
-      <Paper variant="outlined" sx={{ overflowX: "auto", maxWidth: "100%" }}>
-        <Table size="small" sx={{ minWidth: 800 }}>
+      {/* Responsive table container */}
+      <TableContainer component={Paper} variant="outlined" sx={{ maxWidth: "100%", overflowX: "auto" }}>
+        <Table size="small" sx={{ minWidth: 900 }}>
           <TableHead>
             <TableRow>
               <TableCell>Name</TableCell>
               <TableCell>Brand</TableCell>
+              <TableCell>Category</TableCell>
               <TableCell align="right">Bottle Cost</TableCell>
               <TableCell align="right">Bottle Size</TableCell>
               <TableCell>Unit</TableCell>
               <TableCell align="right">Cost / Unit</TableCell>
             </TableRow>
           </TableHead>
+
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6}>Loading…</TableCell>
+                <TableCell colSpan={7}>Loading…</TableCell>
               </TableRow>
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6}>No products yet.</TableCell>
+                <TableCell colSpan={7}>No products yet.</TableCell>
               </TableRow>
             ) : (
               rows.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell>{r.name}</TableCell>
                   <TableCell>{r.brand ?? "—"}</TableCell>
+                  <TableCell>{r.product_categories?.name ?? "—"}</TableCell>
                   <TableCell align="right">${r.total_cost.toFixed(2)}</TableCell>
                   <TableCell align="right">{r.total_size.toFixed(2)}</TableCell>
                   <TableCell>{r.unit}</TableCell>
@@ -167,8 +207,9 @@ export default function ProductsPage() {
             )}
           </TableBody>
         </Table>
-      </Paper>
+      </TableContainer>
 
+      {/* Add dialog */}
       <Dialog open={open} onClose={closeDialog} fullWidth maxWidth="sm">
         <DialogTitle>Add Product</DialogTitle>
         <DialogContent>
@@ -178,13 +219,32 @@ export default function ProductsPage() {
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
               required
-              autoFocus
             />
-            <TextField
-              label="Brand (optional)"
-              value={form.brand}
-              onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))}
-            />
+
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <TextField
+                label="Brand (optional)"
+                value={form.brand}
+                onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))}
+                fullWidth
+              />
+
+              <TextField
+                select
+                label="Category (optional)"
+                value={form.category_id}
+                onChange={(e) => setForm((f) => ({ ...f, category_id: e.target.value }))}
+                fullWidth
+              >
+                <MenuItem value="">None</MenuItem>
+                {categories.map((c) => (
+                  <MenuItem key={c.id} value={c.id}>
+                    {c.name}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Stack>
+
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <TextField
                 label="Bottle cost"
