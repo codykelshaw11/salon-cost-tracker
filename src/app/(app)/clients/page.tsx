@@ -20,7 +20,7 @@ import {
   Typography,
 } from "@mui/material";
 import { supabase } from "@/lib/supabase/client";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 type ClientRow = {
   id: string;
@@ -37,8 +37,6 @@ export default function ClientsPage() {
   const [rows, setRows] = React.useState<ClientRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const shouldOpen = searchParams.get("new") === "1";
   const [open, setOpen] = React.useState(false);
 
   const [form, setForm] = React.useState({
@@ -48,10 +46,6 @@ export default function ClientsPage() {
     email: "",
     notes: "",
   });
-
-  React.useEffect(() => {
-    if (shouldOpen) setOpen(true);
-  }, [shouldOpen]);
 
   async function loadClients() {
     setLoading(true);
@@ -104,14 +98,9 @@ export default function ClientsPage() {
     await loadClients();
   }
 
-  function closeDialog() {
-    setOpen(false);
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("new");
-    router.replace(
-      `/clients${params.toString() ? `?${params.toString()}` : ""}`,
-    );
-  }
+function closeDialog() {
+  setOpen(false);
+}
 
   return (
     <Stack spacing={2}>

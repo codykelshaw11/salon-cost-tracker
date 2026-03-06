@@ -20,7 +20,7 @@ import {
   Typography,
 } from "@mui/material";
 import { supabase } from "@/lib/supabase/client";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 type ClientOption = {
   id: string;
@@ -55,8 +55,6 @@ export default function AppointmentsPage() {
   const [loading, setLoading] = React.useState(true);
   const [open, setOpen] = React.useState(false);
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const shouldOpen = searchParams.get("new") === "1";
   const [filters, setFilters] = React.useState({
     client_id: "",
     start_date: "", // "YYYY-MM-DD"
@@ -70,10 +68,6 @@ export default function AppointmentsPage() {
     service_name: "",
     notes: "",
   });
-
-  React.useEffect(() => {
-    if (shouldOpen) setOpen(true);
-  }, [shouldOpen]);
 
   async function loadClients() {
     const { data, error } = await supabase
@@ -220,14 +214,9 @@ async function loadAppointments(activeFilters = filters) {
     await loadAppointments();
   }
 
-  function closeDialog() {
-    setOpen(false);
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("new");
-    router.replace(
-      `/clients${params.toString() ? `?${params.toString()}` : ""}`,
-    );
-  }
+function closeDialog() {
+  setOpen(false);
+}
 
 
   return (
